@@ -6,6 +6,7 @@
 <meta name="color-scheme" content="light">
 <meta name="supported-color-schemes" content="light">
 <title>守宮小魅 magnetic gecko · 爬蟲選物</title>
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@300;400;500;600&family=Noto+Serif+TC:wght@400;500;600;700&family=Noto+Sans+TC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -1085,17 +1086,100 @@ function checkFormReady() {
   document.getElementById(id).addEventListener('input', checkFormReady);
 });
 
-document.getElementById('book-form').addEventListener('submit', (e) => {
+// ============ 後端 API 設定 ============
+const API_URL = 'https://script.google.com/macros/s/AKfycbyeNdgTuBCTOfbdvwTdpEyFoAb1ZrDbKqG5BtoRsyj5CHHhZYEnJrePWaHmb-Q7dXSK/exec';
+const LIFF_ID = '2009925222-z0lZpGPd';
+
+// LIFF 使用者資料（會在初始化時填入）
+let liffUserName = '';
+let liffUserId = '';
+
+// 初始化 LIFF（拿到客人的 LINE 名稱，可選，失敗也沒關係）
+async function initLiff() {
+  try {
+    if (typeof liff === 'undefined') return;
+    await liff.init({ liffId: LIFF_ID });
+    if (liff.isLoggedIn()) {
+      const profile = await liff.getProfile();
+      liffUserName = profile.displayName || '';
+      liffUserId = profile.userId || '';
+      // 如果姓名還沒填，自動帶入 LINE 名稱
+      const nameInput = document.getElementById('input-name');
+      if (nameInput && !nameInput.value) {
+        nameInput.value = liffUserName;
+        checkFormReady();
+      }
+    }
+  } catch (err) {
+    console.log('LIFF init skipped:', err);
+  }
+}
+initLiff();
+
+document.getElementById('book-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  const submitBtn = document.getElementById('submit-btn');
+  const originalText = submitBtn.textContent;
+  
+  // 取得表單資料
   const name = document.getElementById('input-name').value.trim();
+  const phone = document.getElementById('input-phone').value.trim();
+  const note = document.getElementById('input-note') ? document.getElementById('input-note').value.trim() : '';
   const d = dates.find(x => x.iso === selectedDate);
-  document.getElementById('success-info').innerHTML = `
-    <strong>${name}</strong> 您好<br>
-    已為您保留 ${d.month}月${d.day}日（週${d.weekday}）<br>
-    <strong>${selectedTime}</strong> 的時段
-    ${linkedProduct ? `<br><br>${linkedProduct.cat === '活體' ? '預約看' : '預約取'}：${linkedProduct.name}` : ''}
-  `;
-  document.getElementById('success-screen').classList.add('show');
+  
+  // UI: 切換到處理中狀態
+  submitBtn.disabled = true;
+  submitBtn.textContent = '送出中...';
+  
+  // 準備要送的資料
+  const payload = {
+    date: selectedDate,
+    time: selectedTime,
+    name: name,
+    phone: phone,
+    products: linkedProduct ? `${linkedProduct.cat} - ${linkedProduct.name}` : '',
+    note: note,
+    lineName: liffUserName,
+    lineUserId: liffUserId,
+  };
+  
+  try {
+    // 真實呼叫後端 API
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      // Apps Script 不支援 application/json 預檢，使用 text/plain 繞過 CORS
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
+      redirect: 'follow',
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      // ✅ 成功：顯示預約編號和確認訊息
+      document.getElementById('success-info').innerHTML = `
+        <strong>${name}</strong> 您好<br>
+        已為您保留 ${d.month}月${d.day}日（週${d.weekday}）<br>
+        <strong>${selectedTime}</strong> 的時段
+        ${linkedProduct ? `<br><br>${linkedProduct.cat === '活體' ? '預約看' : '預約取'}：${linkedProduct.name}` : ''}
+        <br><br>
+        <span style="font-size:12px;color:var(--ink-soft);letter-spacing:1px;">預約編號</span><br>
+        <strong style="font-family:monospace;font-size:18px;letter-spacing:1px;">${result.bookingId}</strong>
+      `;
+      document.getElementById('success-screen').classList.add('show');
+    } else {
+      // ❌ API 回傳失敗
+      alert('預約送出失敗：' + (result.error || '未知錯誤') + '\n\n請稍後再試或直接聯絡店家。');
+      submitBtn.disabled = false;
+      submitBtn.textContent = originalText;
+    }
+  } catch (err) {
+    // ❌ 網路錯誤
+    console.error(err);
+    alert('預約送出失敗：網路連線異常\n\n請確認網路後再試，或直接聯絡店家。');
+    submitBtn.disabled = false;
+    submitBtn.textContent = originalText;
+  }
 });
 
 function resetAll() {
